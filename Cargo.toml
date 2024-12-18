@@ -1,7 +1,7 @@
 [package]
 name = "silico-calculator"
 version = "0.1.0"
-description = "A dead simple, Windows-like calculator for Linux (and other systems), available on all major desktop environments."
+description = "A dead simple, Windows-like calculator available on all major operating systems and desktop environments."
 authors = ["Violet Iapalucci"]
 license = "LGPL-3.0"
 readme = "README.md"
@@ -15,4 +15,3 @@ name = "calculator"
 eframe = "0.30.0"
 image = "0.25.5"
 meval = "0.2.0"
-num-format = "0.4.4"
