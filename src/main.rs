@@ -1,7 +1,6 @@
-use std::{collections::HashSet, sync::LazyLock};
+use std::cell::RefCell;
 
-use eframe::egui::{self, Align, Color32, Frame, IconData, InputState, Key, Layout, Margin, RichText, Rounding, Sense, Ui, Widget};
-use unicode_segmentation::UnicodeSegmentation;
+use eframe::egui::{self, Align, Color32, CursorIcon, Frame, IconData, InputState, Key, Layout, Margin, RichText, Rounding, Sense, Ui, Widget};
 
 /// The height, in pixels, of buttons on the calculator.
 static BUTTON_HEIGHT: f32 = 40.;
@@ -11,7 +10,7 @@ static BUTTON_SPACING: f32 = 3.;
 
 /// The height, in pixels, of the "screen" part of the calculator, which is the part
 /// that displays the expression to evaluate.
-static SCREEN_HEIGHT: f32 = 120.;
+static SCREEN_HEIGHT: f32 = 140.;
 
 fn main() -> eframe::Result {
     let icon = image::load_from_memory(include_bytes!("../assets/images/icon.png")).unwrap().to_rgba8();
@@ -28,37 +27,89 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
 
-    eframe::run_native("Calculator", options, Box::new(|_cc| Ok(Box::<AppState>::default())))
+    eframe::run_native("Silico Calculator", options, Box::new(|_cc| Ok(Box::<AppState>::default())))
+}
+
+/// Assigns the value on the left to the value on the right. This avoids borrow errors
+/// with `RefCell` in this particular situation:
+///
+/// ```rust
+/// let cell = RefCell::new(some_data);
+/// *cell.borrow_mut() = cell.borrow().do_something();
+/// ```
+///
+/// Normally, this causes an "already borrowed" error, even if `do_something()` returns
+/// a value that doesn't borrow the data. This macro avoids this error, under the condition
+/// that the value on the right doesn't borrow the `RefCell`.
+///
+/// This can be safely used with values other than `RefCell` as well, but it's relatively
+/// pointless.
+macro_rules! assign {
+    ($left:expr => $right:expr) => {{
+        let result = $right;
+        $left = result;
+    }};
 }
 
 #[derive(Default)]
 struct AppState {
-    expression: String,
+    expression: RefCell<String>,
 }
 
-static KEYS: LazyLock<HashSet<PressableKey>> = LazyLock::new(|| {
-    HashSet::from([
-        // Numbers
-        PressableKey::no_shift(Key::Num1, "1"),
-        PressableKey::no_shift(Key::Num2, "2"),
-        PressableKey::no_shift(Key::Num3, "3"),
-        PressableKey::no_shift(Key::Num4, "4"),
-        PressableKey::no_shift(Key::Num5, "5"),
-        PressableKey::no_shift(Key::Num6, "6"),
-        PressableKey::no_shift(Key::Num7, "7"),
-        PressableKey::no_shift(Key::Num8, "8"),
-        PressableKey::no_shift(Key::Num9, "9"),
-        PressableKey::no_shift(Key::Num0, "0"),
-        // Operators
-        PressableKey::shift(Key::Num9, "("),
-        PressableKey::shift(Key::Num0, ")"),
-        PressableKey::shift(Key::Num6, " ^ "),
-        PressableKey::maybe_shift(Key::Plus, " + "),
-        PressableKey::no_shift(Key::Minus, " - "),
-        PressableKey::shift(Key::Num8, " × "),
-        PressableKey::no_shift(Key::Slash, " / "),
-    ])
-});
+impl AppState {
+    pub fn clear(&self) {
+        *self.expression.borrow_mut() = String::new();
+    }
+
+    pub fn evaluate(&self) {
+        assign!(
+            *self.expression.borrow_mut() =>
+            meval::eval_str(&self.expression.borrow().replace("×", "*")).map(|result| {
+                if result.fract() == 0. {
+                    format!("{result}")
+                } else {
+                    format!("{result:.8}").trim_end_matches('0').to_owned()
+                }
+            })
+            .unwrap_or_else(|_error| "Error".to_owned())
+        );
+    }
+
+    pub fn backspace(&self) {
+        assign!(*self.expression.borrow_mut() => self.expression.borrow().trim_end().to_owned().replace("×", "*"));
+
+        assign!(*self.expression.borrow_mut() => if self.expression.borrow().len() == 0 {
+            String::new()
+        } else {
+            self.expression
+                .borrow()
+                .get(0 .. self.expression.borrow().len() - 1)
+                .unwrap()
+                .trim_end()
+                .to_owned()
+        });
+
+        if self.expression.borrow().ends_with(|char| matches!(char, '+' | '-' | '/' | '*')) {
+            *self.expression.borrow_mut() += " ";
+        }
+
+        assign!(*self.expression.borrow_mut() => self.expression.borrow().replace("*", "×"));
+    }
+}
+
+macro_rules! button {
+    ($key:expr, $display:expr, $app:expr) => {
+        PressableKey::new($key, $display, || {
+            *$app.expression.borrow_mut() += $display;
+        })
+    };
+
+    ($key:expr, $display:tt, $app:expr,spaced) => {
+        PressableKey::new($key, $display, || {
+            *$app.expression.borrow_mut() += concat!(" ", $display, " ");
+        })
+    };
+}
 
 impl eframe::App for AppState {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -80,7 +131,11 @@ impl eframe::App for AppState {
                         }
                         .show(ui, |ui| {
                             ui.with_layout(Layout::bottom_up(Align::RIGHT), |ui| {
-                                ui.label(RichText::new(&self.expression).size(32.).color(Color32::from_hex("#FFFFFF").unwrap()));
+                                ui.label(
+                                    RichText::new(self.expression.borrow().clone())
+                                        .size(36.)
+                                        .color(Color32::from_hex("#FFFFFF").unwrap()),
+                                );
                             });
                         })
                         .response
@@ -89,106 +144,133 @@ impl eframe::App for AppState {
                     ui.style_mut().spacing.item_spacing = [BUTTON_SPACING, BUTTON_SPACING].into();
                     let width = (ui.available_width() - 3. * BUTTON_SPACING) / 4.;
 
-                    for key in KEYS.iter() {
-                        if ui.ctx().input(|input| key.is_pressed(input)) {
-                            if &self.expression == "Error" {
-                                self.expression = String::new();
-                            }
-                            self.expression += key.expression;
-                        }
-                    }
-
-                    // Enter
-                    if ui.ctx().input(|input| input.key_pressed(Key::Enter)) {
-                        self.expression = meval::eval_str(&self.expression.replace("×", "*"))
-                            .map(|result| result.to_string())
-                            .unwrap_or_else(|_error| "Error".to_owned());
-                    }
-
-                    // Clear
-                    if ui.ctx().input(|input| input.key_pressed(Key::C)) {
-                        self.expression = String::new();
-                    }
-
                     // Backspace
                     if ui.ctx().input(|input| input.key_pressed(Key::Backspace)) {
-                        self.expression = self.expression.trim_end().to_owned();
-                        self.expression = self
-                            .expression
-                            .grapheme_indices(true)
-                            .filter_map(|(index, character)| (index != self.expression.len()).then_some(character))
-                            .collect();
+                        self.backspace();
+                    }
+
+                    macro_rules! add_button {
+                        ($ui:expr, $button:expr) => {
+                            $ui.add_sized([width, BUTTON_HEIGHT], $button);
+                        };
                     }
 
                     ui.horizontal(|ui| {
-                        ui.add_sized([width, BUTTON_HEIGHT], Button::operator("C"));
-                        ui.add_sized([width, BUTTON_HEIGHT], Button::operator("B"));
-                        ui.add_sized([width, BUTTON_HEIGHT], Button::operator("^"));
-                        ui.add_sized([width, BUTTON_HEIGHT], Button::operator("+"));
+                        add_button!(ui, button!(Key::C, "C", self).action(|| self.clear()));
+                        add_button!(ui, button!(Key::Period, ".", self));
+                        add_button!(ui, button!(Key::Num6, "^", self, spaced).hold_shift());
+                        add_button!(ui, button!(Key::Slash, "÷", self, spaced));
                     });
 
                     ui.horizontal(|ui| {
-                        ui.add_sized([width, BUTTON_HEIGHT], Button::number("7"));
-                        ui.add_sized([width, BUTTON_HEIGHT], Button::number("8"));
-                        ui.add_sized([width, BUTTON_HEIGHT], Button::number("9"));
-                        ui.add_sized([width, BUTTON_HEIGHT], Button::operator("÷"));
+                        add_button!(ui, button!(Key::Num7, "7", self));
+                        add_button!(ui, button!(Key::Num8, "8", self));
+                        add_button!(ui, button!(Key::Num9, "9", self));
+                        add_button!(ui, button!(Key::Num8, "×", self, spaced).hold_shift());
                     });
 
                     ui.horizontal(|ui| {
-                        ui.add_sized([width, BUTTON_HEIGHT], Button::number("4"));
-                        ui.add_sized([width, BUTTON_HEIGHT], Button::number("5"));
-                        ui.add_sized([width, BUTTON_HEIGHT], Button::number("6"));
-                        ui.add_sized([width, BUTTON_HEIGHT], Button::operator("×"));
+                        add_button!(ui, button!(Key::Num4, "4", self));
+                        add_button!(ui, button!(Key::Num5, "5", self));
+                        add_button!(ui, button!(Key::Num6, "6", self));
+                        add_button!(ui, button!(Key::Minus, "-", self));
                     });
 
                     ui.horizontal(|ui| {
-                        ui.add_sized([width, BUTTON_HEIGHT], Button::number("1"));
-                        ui.add_sized([width, BUTTON_HEIGHT], Button::number("2"));
-                        ui.add_sized([width, BUTTON_HEIGHT], Button::number("3"));
-                        ui.add_sized([width, BUTTON_HEIGHT], Button::operator("-"));
+                        add_button!(ui, button!(Key::Num1, "1", self));
+                        add_button!(ui, button!(Key::Num2, "2", self));
+                        add_button!(ui, button!(Key::Num3, "3", self));
+                        add_button!(ui, button!(Key::Plus, "+", self, spaced).maybe_hold_shift());
                     });
 
                     ui.horizontal(|ui| {
-                        ui.add_sized([width, BUTTON_HEIGHT], Button::operator("("));
-                        ui.add_sized([width, BUTTON_HEIGHT], Button::number("0"));
-                        ui.add_sized([width, BUTTON_HEIGHT], Button::operator(")"));
-                        ui.add_sized([width, BUTTON_HEIGHT], Button::operator("=").background("#4CC2FF"));
+                        add_button!(ui, button!(Key::Num9, "(", self).hold_shift());
+                        add_button!(ui, button!(Key::Num0, "0", self));
+                        add_button!(ui, button!(Key::Num0, ")", self).hold_shift());
+                        add_button!(
+                            ui,
+                            button!(Key::Enter, "=", self)
+                                .background("#4CC2FF")
+                                .foreground("#000000")
+                                .action(|| self.evaluate())
+                        );
                     });
                 });
             });
     }
 }
 
-struct Button {
-    text: &'static str,
+#[derive(PartialEq, Eq, Hash)]
+struct PressableKey<F: Fn()> {
+    key: Key,
+    requires_shift: Option<bool>,
+    display_text: &'static str,
+    action: F,
     background: Color32,
-    key: Option<&'static PressableKey>,
+    foreground: Color32,
 }
 
-impl Button {
-    pub fn number(text: &'static str) -> Button {
+impl<F: Fn()> PressableKey<F> {
+    fn new(key: Key, display_text: &'static str, action: F) -> Self {
         Self {
-            text: text.into(),
-            background: Color32::from_hex("#353A4E").unwrap(),
-            key: KEYS.iter().find(|key| key.expression.trim() == text),
+            key,
+            display_text,
+            action,
+            requires_shift: Some(false),
+            background: if display_text.starts_with(|character: char| character.is_ascii_digit()) {
+                Color32::from_hex("#353A4E").unwrap()
+            } else {
+                Color32::from_hex("#2C2C40").unwrap()
+            },
+            foreground: Color32::WHITE,
         }
     }
 
-    pub fn operator(text: &'static str) -> Button {
-        Self {
-            text: text.into(),
-            background: Color32::from_hex("#2C2C40").unwrap(),
-            key: KEYS.iter().find(|key| key.expression.trim() == text),
+    fn is_pressed(&self, input: &InputState) -> bool {
+        if !input.key_pressed(self.key) {
+            return false;
+        }
+
+        if let Some(requires_shift) = self.requires_shift {
+            return !requires_shift ^ input.modifiers.shift;
+        }
+
+        true
+    }
+
+    fn action<G: Fn()>(self, action: G) -> PressableKey<G> {
+        PressableKey {
+            action,
+            key: self.key,
+            display_text: self.display_text,
+            requires_shift: self.requires_shift,
+            background: self.background,
+            foreground: self.foreground,
         }
     }
 
-    pub fn background(mut self, color: &str) -> Button {
+    fn hold_shift(mut self) -> Self {
+        self.requires_shift = Some(true);
+        self
+    }
+
+    fn maybe_hold_shift(mut self) -> Self {
+        self.requires_shift = None;
+        self
+    }
+
+    fn background(mut self, color: &str) -> Self {
         self.background = Color32::from_hex(color).unwrap();
+        self
+    }
+
+    fn foreground(mut self, color: &str) -> Self {
+        self.foreground = Color32::from_hex(color).unwrap();
         self
     }
 }
 
-impl Widget for Button {
+impl<F: Fn()> Widget for PressableKey<F> {
     fn ui(self, ui: &mut Ui) -> egui::Response {
         let frame = Frame {
             fill: self.background,
@@ -204,95 +286,21 @@ impl Widget for Button {
         //
         // See https://github.com/emilk/egui/blob/36a70e12c3a8a70308a4faa15799d557a5c0a064/crates/egui/src/containers/frame.rs#L323
         //
-        let add_contents = |ui: &mut Ui| ui.label(RichText::new(self.text).strong().color(Color32::from_hex("#FFFFFF").unwrap()).size(15.));
+        let add_contents = |ui: &mut Ui| ui.label(RichText::new(self.display_text).strong().color(self.foreground).size(15.));
         let mut prepared = frame.begin(ui);
         add_contents(&mut prepared.content_ui);
         prepared.paint(ui);
         let content_with_margin = prepared.content_ui.min_rect() + prepared.frame.inner_margin + prepared.frame.outer_margin;
         let response = ui.allocate_rect(content_with_margin, Sense::click());
 
-        if let Some(key) = self.key {
-            if response.clicked() {}
-        };
+        if response.hovered() {
+            ui.ctx().output_mut(|output| output.cursor_icon = CursorIcon::PointingHand);
+        }
+
+        if response.clicked() || ui.ctx().input(|input| self.is_pressed(input)) {
+            (self.action)();
+        }
 
         response
-    }
-}
-
-#[derive(PartialEq, Eq, Hash)]
-struct PressableKey {
-    key: Key,
-    requires_shift: Option<bool>,
-    expression: &'static str,
-}
-
-impl PressableKey {
-    /// Creates a new pressable key, which will only claim to be pressed when shift is *not*
-    /// being held down, but the given key *is* pressed.
-    ///
-    /// # Parameters
-    ///
-    /// - `key` - The key to listen for.
-    /// - `expression` - the tokens to append to the calculator's screen.
-    ///
-    /// # Returns
-    ///
-    /// The `PressableKey` object.
-    fn no_shift(key: Key, expression: &'static str) -> PressableKey {
-        PressableKey {
-            key,
-            expression,
-            requires_shift: Some(false),
-        }
-    }
-
-    /// Creates a new pressable key, which will only claim to be pressed when shift is being held down
-    /// while the given key is pressed.
-    ///
-    /// # Parameters
-    ///
-    /// - `key` - The key to listen for.
-    /// - `expression` - the tokens to append to the calculator's screen.
-    ///
-    /// # Returns
-    ///
-    /// The `PressableKey` object.
-    fn shift(key: Key, expression: &'static str) -> PressableKey {
-        PressableKey {
-            key,
-            expression,
-            requires_shift: Some(true),
-        }
-    }
-
-    /// Creates a new pressable key, which will claim to be pressed when the given key is
-    /// pressed, regardless of whether or not shift is being held.
-    ///
-    /// # Parameters
-    ///
-    /// - `key` - The key to listen for.
-    /// - `expression` - the tokens to append to the calculator's screen.
-    ///
-    /// # Returns
-    ///
-    /// The `PressableKey` object.
-    fn maybe_shift(key: Key, expression: &'static str) -> PressableKey {
-        PressableKey {
-            key,
-            expression,
-            requires_shift: None,
-        }
-    }
-
-    fn is_pressed(&self, input: &InputState) -> bool {
-        if !input.key_pressed(self.key) {
-            return false;
-        }
-
-        if let Some(requires_shift) = self.requires_shift {
-            return !requires_shift ^ input.modifiers.shift;
-        }
-
-        true
     }
 }

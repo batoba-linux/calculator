@@ -1,5 +1,5 @@
 [package]
-name = "universal-calculator"
+name = "silico-calculator"
 version = "0.1.0"
 description = "A dead simple, Windows-like calculator for Linux (and other systems), available on all major desktop environments."
 authors = ["Violet Iapalucci"]
@@ -15,5 +15,4 @@ name = "calculator"
 eframe = "0.30.0"
 image = "0.25.5"
 meval = "0.2.0"
-unicode-segmentation = "1.12.0"
-
+num-format = "0.4.4"
