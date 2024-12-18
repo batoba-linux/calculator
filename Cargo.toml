@@ -1,11 +1,12 @@
 [package]
 name = "silico-calculator"
-version = "0.1.1"
+version = "0.1.2"
 description = "A dead simple, Windows-like calculator available on all major operating systems and desktop environments."
 authors = ["Violet Iapalucci"]
 license = "LGPL-3.0"
 readme = "README.md"
 edition = "2021"
+repository = "https://github.com/silico-apps/calculator"
 
 [dependencies]
 eframe = "0.30.0"
