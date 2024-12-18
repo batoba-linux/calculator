@@ -1,0 +1,19 @@
+[package]
+name = "universal-calculator"
+version = "0.1.0"
+description = "A dead simple, Windows-like calculator for Linux (and other systems), available on all major desktop environments."
+authors = ["Violet Iapalucci"]
+license = "LGPL-3.0"
+readme = "README.md"
+edition = "2021"
+
+[[bin]]
+path = "src/main.rs"
+name = "calculator"
+
+[dependencies]
+eframe = "0.30.0"
+image = "0.25.5"
+meval = "0.2.0"
+unicode-segmentation = "1.12.0"
+
