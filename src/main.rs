@@ -64,7 +64,7 @@ impl AppState {
     pub fn evaluate(&self) {
         assign!(
             *self.expression.borrow_mut() =>
-            meval::eval_str(&self.expression.borrow().replace("×", "*")).map(|result| {
+            meval::eval_str(&self.expression.borrow().replace("×", "*").replace("÷", "/")).map(|result| {
                 if result.fract() == 0. {
                     format!("{result}")
                 } else {
@@ -76,7 +76,7 @@ impl AppState {
     }
 
     pub fn backspace(&self) {
-        assign!(*self.expression.borrow_mut() => self.expression.borrow().trim_end().to_owned().replace("×", "*"));
+        assign!(*self.expression.borrow_mut() => self.expression.borrow().trim_end().to_owned().replace("×", "*").replace("÷", "/"));
 
         assign!(*self.expression.borrow_mut() => if self.expression.borrow().len() == 0 {
             String::new()
@@ -93,7 +93,7 @@ impl AppState {
             *self.expression.borrow_mut() += " ";
         }
 
-        assign!(*self.expression.borrow_mut() => self.expression.borrow().replace("*", "×"));
+        assign!(*self.expression.borrow_mut() => self.expression.borrow().replace("*", "×").replace("/", "÷"));
     }
 }
 
